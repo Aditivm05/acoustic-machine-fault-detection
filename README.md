@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Acoustic Machine-Fault Detection Using CNN and CNN-GRU
 
 An end-to-end deep learning project designed to detect anomalies and machine faults across various industrial equipment types (**fan, pump, slider, valve**) operating under three noise conditions (**-6 dB, 0 dB, +6 dB**). 
@@ -84,3 +85,7 @@ To replicate or run evaluations locally:
    ```
 3. Configure dataset directory:  
    To avoid absolute paths, configure your root paths inside `train_experiments.py` or `evaluate_experiments.py` to target your local machine directory.
+=======
+# acoustic-machine-fault-detection
+Acoustic machine-fault detection using CNN and CNN-GRU models on the MIMII dataset.
+>>>>>>> 413bec2fa6ac681cad4dc545979f593cab770e02
