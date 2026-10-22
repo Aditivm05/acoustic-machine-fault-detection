@@ -1,0 +1,19 @@
+{
+    "total_samples": 2400,
+    "unique_source_recordings": 977,
+    "train_source_recordings": 683,
+    "val_source_recordings": 147,
+    "test_source_recordings": 147,
+    "train_clips": 1674,
+    "val_clips": 362,
+    "test_clips": 364,
+    "overlap_train_val": 0,
+    "overlap_train_test": 0,
+    "overlap_val_test": 0,
+    "leak_free_verified": true,
+    "scaler": {
+        "global_mean": 0.6007688045501709,
+        "global_std": 0.14802886545658112,
+        "fitted_on": "train_split_only"
+    }
+}
