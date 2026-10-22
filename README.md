@@ -42,7 +42,7 @@ Two principal deep learning configurations were built and optimized:
 | **Baseline CNN (Leak-Free)** | 64.56% | 76.29% | 41.11% | 53.43% | 0.7225 |
 | **Baseline CNN-GRU (Leak-Free)** | 74.18% | 75.60% | 70.56% | 72.99% | 0.8310 |
 | **Improved Acoustic CNN** | 82.97% | 81.38% | 85.00% | 83.15% | 0.9139 |
-| **Improved Acoustic CNN-GRU** | **86.81%** | **91.25%** | **81.11%** | **85.88%** | **0.9466** |
+| **Improved Acoustic CNN-GRU (threshold 0.50)** | **86.81%** | **91.25%** | **81.11%** | **85.88%** | **0.9466** |
 
 *The final selected architecture is the **Improved Acoustic CNN-GRU** owing to its robust temporal mapping capabilities.*
 
@@ -85,7 +85,20 @@ To replicate or run evaluations locally:
    ```
 3. Configure dataset directory:  
    To avoid absolute paths, configure your root paths inside `train_experiments.py` or `evaluate_experiments.py` to target your local machine directory.
-=======
-# acoustic-machine-fault-detection
-Acoustic machine-fault detection using CNN and CNN-GRU models on the MIMII dataset.
->>>>>>> 413bec2fa6ac681cad4dc545979f593cab770e02
+
+### Operating Threshold Selection
+
+For a fault-detection operating point, the threshold was selected on validation data by maximizing balanced accuracy. The selected threshold is **0.26** (validation balanced accuracy **89.25%**). On the held-out test set at this fixed threshold, the Improved Acoustic CNN-GRU achieved:
+
+- **Accuracy:** 86.26%
+- **F1-score:** 86.84%
+- **ROC-AUC:** 0.9466
+- **Sensitivity:** 91.67%
+- **Specificity:** 80.98%
+- **False-alarm rate:** 19.02%
+- **Missed-fault rate:** 8.33%
+
+At threshold 0.26, the test confusion matrix is `[[149, 35], [15, 165]]` in `[[TN, FP], [FN, TP]]` order. Compared with threshold 0.50, this operating point raises sensitivity and lowers missed faults, with a modest reduction in accuracy and a higher false-alarm rate. The threshold was selected using validation data only; the test set was used for final evaluation.
+
+Full results: [Final Operating Threshold Evaluation](experiments/accuracy_improvement_v1/metrics/final_threshold_evaluation.md)
+
