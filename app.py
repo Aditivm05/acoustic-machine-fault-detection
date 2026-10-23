@@ -202,8 +202,7 @@ if audio_bytes is not None:
         infer_latency_ms = (
             time.perf_counter() - t_infer_start
         ) * 1000
-
-              is_abnormal = prob_abnormal >= active_threshold
+        is_abnormal = prob_abnormal >= active_threshold
 
         st.markdown("### 🔍 Diagnostic Screening Result")
 
