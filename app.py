@@ -169,13 +169,17 @@ tab_upload, tab_samples, tab_benchmark = st.tabs([
     "📊 Benchmark Performance",
 ])
 
-# Shared audio state for the current Streamlit run
-audio_bytes = None
-audio_source_desc = "No audio selected"
+# Shared audio state persisted across Streamlit reruns
+audio_bytes = st.session_state.get("audio_to_analyze")
+audio_source_desc = st.session_state.get(
+    "audio_source_to_analyze",
+    "No audio selected",
+)
 
 # ------------------------------------------------------------------
 # Tab 1: Upload audio and run prediction
 # ------------------------------------------------------------------
+
 
 with tab_upload:
     st.subheader("Upload machine audio")
@@ -187,23 +191,12 @@ with tab_upload:
     )
 
     if uploaded_file is not None:
-        audio_bytes = uploaded_file.getvalue()
-        audio_source_desc = uploaded_file.name
-
-    if audio_bytes is not None:
-        st.audio(audio_bytes, format="audio/wav")
+        st.audio(uploaded_file.getvalue(), format="audio/wav")
 
         if st.button("Analyze Uploaded Audio", key="analyze_upload"):
-            st.session_state["audio_to_analyze"] = audio_bytes
-            st.session_state["audio_source_to_analyze"] = audio_source_desc
-
-# A dataset sample can also be analyzed after loading it.
-# This state is shared between the sample and upload tabs.
-if "audio_to_analyze" not in st.session_state:
-    st.session_state["audio_to_analyze"] = None
-
-if "audio_source_to_analyze" not in st.session_state:
-    st.session_state["audio_source_to_analyze"] = "No audio selected"
+            st.session_state["audio_to_analyze"] = uploaded_file.getvalue()
+            st.session_state["audio_source_to_analyze"] = uploaded_file.name
+            st.session_state["run_prediction"] = True
 
 # ------------------------------------------------------------------
 # Tab 2: Dataset benchmark samples
@@ -471,13 +464,17 @@ with tab_benchmark:
 # Audio Processing and Prediction
 # ------------------------------------------------------------------
 
-if audio_bytes is not None:
+if (
+    audio_bytes is not None
+    and st.session_state.get("run_prediction", False)
+):
     st.markdown("---")
     st.subheader("🎧 Audio Playback & Analysis")
     st.write(f"**Source:** {audio_source_desc}")
     st.audio(audio_bytes, format="audio/wav")
 
     try:
+        st.session_state["run_prediction"] = False
         # Preprocess audio
         prep_start = time.perf_counter()
 
