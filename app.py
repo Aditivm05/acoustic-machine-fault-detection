@@ -286,7 +286,8 @@ if audio_to_analyze is not None:
     st.write(f"**Source:** {audio_source_desc}")
     st.audio(audio_to_analyze, format="audio/wav")
 
-    if st.button("Run Prediction", key="run_prediction"):
+    st.session_state["run_prediction"] = True
+    st.session_state["run_prediction"] = False
         try:
             # Preprocess audio
             prep_start = time.perf_counter()
