@@ -329,30 +329,25 @@ with tab_benchmark:
         )
 
 
-# ------------------------------------------------------------------------------
-# Audio Processing & Prediction Execution
-# ------------------------------------------------------------------------------
 
-
-
-# ------------------------------------------------------------------------------
-# Audio Processing & Prediction
-# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------
+# Audio Processing and Prediction
+# ------------------------------------------------------------------
 
 if audio_bytes is not None:
     st.markdown("---")
-    st.subheader("Audio Playback & Analysis")
+    st.subheader("🎧 Audio Playback & Analysis")
     st.write(f"**Source:** {audio_source_desc}")
     st.audio(audio_bytes, format="audio/wav")
 
     try:
-        # 1. Preprocess the uploaded audio
+        # Preprocess audio
         prep_start = time.perf_counter()
 
         audio_buffer = io.BytesIO(audio_bytes)
         log_mel = preprocess_audio_file(audio_buffer)
 
-        # Training-split normalization for the improved models
+        # Training-split normalization for improved models
         train_mean = 0.6007688045501709
         train_std = 0.14802886545658112
 
@@ -369,7 +364,7 @@ if audio_bytes is not None:
             time.perf_counter() - prep_start
         ) * 1000
 
-        # 2. Load the selected model and predict
+        # Load model and predict
         model = get_model(model_choice)
 
         infer_start = time.perf_counter()
@@ -384,20 +379,20 @@ if audio_bytes is not None:
 
         is_abnormal = probability >= active_threshold
 
-        # 3. Display prediction
-        st.markdown("### Diagnostic Screening Result")
+        # Display prediction
+        st.markdown("### 🔍 Diagnostic Screening Result")
 
         result_col, metrics_col = st.columns([1.2, 1.8])
 
         with result_col:
             if is_abnormal:
-                st.error("ABNORMAL FAULT DETECTED")
+                st.error("🚨 ABNORMAL FAULT DETECTED")
                 st.write(
                     "An acoustic anomaly was detected. "
                     "Further inspection is recommended."
                 )
             else:
-                st.success("NORMAL OPERATION")
+                st.success("✅ NORMAL OPERATION")
                 st.write(
                     "No anomaly was flagged at the selected threshold."
                 )
@@ -426,9 +421,9 @@ if audio_bytes is not None:
             f"Preprocessing time: {prep_latency_ms:.1f} ms"
         )
 
-        # 4. Display the original log-Mel spectrogram
+        # Spectrogram visualization
         st.markdown("---")
-        st.subheader("Normalized Log-Mel Spectrogram")
+        st.subheader("📈 Normalized Log-Mel Spectrogram")
 
         fig, ax = plt.subplots(figsize=(10, 3.2), dpi=150)
 
@@ -454,40 +449,14 @@ if audio_bytes is not None:
         plt.close(fig)
 
     except Exception as err:
-        st.error(
-            f"Audio processing or prediction failed: {err}"
-        )
+        st.error(f"Audio processing or prediction failed: {err}")
         st.info(
-            "Check the audio file, preprocessing dependencies, "
-            "checkpoint paths, and model input shape."
+            "Check the WAV file, dependencies, checkpoint paths, "
+            "and model input shape."
         )
 
 else:
     st.info(
-        "Upload an audio file or load a dataset sample to run "
+        "👈 Upload an audio file or load a dataset sample to run "
         "the acoustic screening demonstration."
     )
-
-        # ----------------------------------------------------------------------
-        # Spectrogram Visualization
-        # ----------------------------------------------------------------------
-        st.markdown("---")
-        st.subheader("📈 Normalized Log-Mel Spectrogram Feature Representation")
-        
-        fig, ax = plt.subplots(figsize=(10, 3.2), dpi=150)
-        im = ax.imshow(log_mel, origin="lower", aspect="auto", cmap="magma")
-        ax.set_title("Input Feature: 128 Mel Bins × 157 Time Frames (Normalized [0, 1])", fontsize=11, fontweight="bold")
-        ax.set_xlabel("Time Frames (Hop: 512 samples, 16 kHz)", fontsize=9)
-        ax.set_ylabel("Mel Frequency Bins", fontsize=9)
-        cbar = plt.colorbar(im, ax=ax)
-        cbar.set_label("Normalized Energy", fontsize=9)
-        plt.tight_layout()
-        st.pyplot(fig)
-        plt.close()
-
-    except Exception as err:
-        st.error(f"⚠️ Audio Processing Error: {str(err)}")
-        st.info("Please ensure the file is an uncorrupted, standard 16 kHz WAV audio recording.")
-
-else:
-    st.info("👈 Please upload an audio file or select a dataset sample clip to run the acoustic screening demonstration.")
