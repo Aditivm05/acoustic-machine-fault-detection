@@ -3,109 +3,65 @@ Streamlit Web Application: Acoustic Machine-Fault Detection Demonstration
 Screening Prototype for Predictive Maintenance Using CNN and CNN-GRU Models
 """
 
+
 import os
+import sys
 import json
 import time
 import io
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import soundfile as sf
 import torch
 import streamlit as st
 
-from src.models import load_model, FanCNN, FanCNNGRU
 from src.audio_processing import (
-    preprocess_audio_file, prepare_input_tensor, SR, DURATION, N_MELS, N_FFT, HOP_LENGTH
+    preprocess_audio_file,
+    prepare_input_tensor,
+    SR, DURATION, N_MELS, N_FFT, HOP_LENGTH
 )
 
-# ------------------------------------------------------------------------------
-# Page Configuration & Styling
-# ------------------------------------------------------------------------------
-st.set_page_config(
-    page_title="Acoustic Machine-Fault Detection",
-    page_icon="🔊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+PROJECT_DIR = Path(__file__).resolve().parent
+EXP_DIR = PROJECT_DIR / "experiments" / "accuracy_improvement_v1"
 
-# Custom CSS for clean, professional look
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.2rem;
-        font-weight: 700;
-        color: #1e3a8a;
-        margin-bottom: 0.2rem;
-    }
-    .sub-header {
-        font-size: 1.1rem;
-        color: #4b5563;
-        margin-bottom: 1.5rem;
-    }
-    .disclaimer-box {
-        background-color: #fef3c7;
-        border-left: 5px solid #f59e0b;
-        padding: 12px 18px;
-        border-radius: 4px;
-        margin-bottom: 20px;
-        color: #92400e;
-        font-size: 0.92rem;
-    }
-    .status-normal {
-        background-color: #ecfdf5;
-        border: 2px solid #10b981;
-        border-radius: 8px;
-        padding: 20px;
-        text-align: center;
-        color: #065f46;
-    }
-    .status-abnormal {
-        background-color: #fef2f2;
-        border: 2px solid #ef4444;
-        border-radius: 8px;
-        padding: 20px;
-        text-align: center;
-        color: #991b1b;
-    }
-    .metric-card {
-        background-color: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 8px;
-        padding: 15px;
-        text-align: center;
-    }
-    .metric-value {
-        font-size: 1.6rem;
-        font-weight: 700;
-        color: #1e293b;
-    }
-    .metric-label {
-        font-size: 0.85rem;
-        color: #64748b;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-</style>
-""", unsafe_allow_html=True)
+if str(EXP_DIR) not in sys.path:
+    sys.path.insert(0, str(EXP_DIR))
 
-PROJECT_DIR = r"C:\Capstone Project files"
-CONFIG_PATH = os.path.join(PROJECT_DIR, "outputs", "configs", "threshold_config.json")
+from models_v1 import ImprovedAcousticCNNGRU, ImprovedAcousticCNN
+
+CONFIG_PATH = PROJECT_DIR / "outputs" / "configs" / "threshold_config.json"
+
 
 # ------------------------------------------------------------------------------
 # Model Caching
 # ------------------------------------------------------------------------------
 @st.cache_resource
 def get_model(model_name: str):
-    """
-    Loads model checkpoint once and caches it in memory to prevent reloading.
-    """
+    """Load the selected improved model and its trained weights."""
+
     if model_name == "CNN Baseline":
-        ckpt = os.path.join(PROJECT_DIR, "cnn_improved_best.pt")
-        return load_model("CNN", ckpt, device="cpu")
+        model = ImprovedAcousticCNN()
+        checkpoint_path = EXP_DIR / "improved_cnn_best.pt"
     else:
-        ckpt = os.path.join(PROJECT_DIR, "cnn_gru_improved_best.pt")
-        return load_model("CNN-GRU", ckpt, device="cpu")
+        model = ImprovedAcousticCNNGRU()
+        checkpoint_path = EXP_DIR / "improved_cnn_gru_best.pt"
+
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(
+            f"Model checkpoint not found: {checkpoint_path}"
+        )
+
+    state_dict = torch.load(
+        checkpoint_path,
+        map_location="cpu",
+        weights_only=True
+    )
+
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
 
 @st.cache_data
 def get_threshold_configs():
@@ -149,40 +105,55 @@ cfg = threshold_configs.get(model_key, {})
 st.sidebar.markdown("---")
 st.sidebar.header("🎯 Decision Threshold")
 
+
 threshold_mode = st.sidebar.radio(
     "Operating Strategy",
     [
-        "Industrial Low-Alarm (FPR ≤ 15%)",
+        "Validation-selected threshold",
         "Default Baseline (0.50)",
         "Max F1 Sensitivity",
         "Custom Slider"
     ],
     index=0,
-    help="In industrial predictive maintenance, high false alarm rates cause costly disruptions. The constrained mode guarantees low false alarms on validation data."
+    help=(
+        "The validation-selected threshold for the improved CNN-GRU "
+        "is 0.26. The threshold changes the decision, not the model."
+    )
 )
 
-if threshold_mode == "Industrial Low-Alarm (FPR ≤ 15%)":
-    active_threshold = float(cfg.get("selected_constrained_threshold", 0.75 if model_key == "CNN-GRU" else 0.53))
-    st.sidebar.info(f"Threshold set to **{active_threshold:.2f}** (Validation FPR: {cfg.get('constrained_metrics', {}).get('false_alarm_rate_fpr', 0.15)*100:.1f}%)")
+if threshold_mode == "Validation-selected threshold":
+    if model_key == "CNN-GRU":
+        active_threshold = 0.26
+    else:
+        # No validation-selected CNN threshold was provided here.
+        active_threshold = 0.50
+
+    st.sidebar.info(
+        f"Decision threshold: {active_threshold:.2f}"
+    )
+
 elif threshold_mode == "Default Baseline (0.50)":
     active_threshold = 0.50
-    st.sidebar.info("Standard neutral probability threshold: **0.50**")
-elif threshold_mode == "Max F1 Sensitivity":
-    active_threshold = float(cfg.get("best_f1_threshold", 0.14 if model_key == "CNN-GRU" else 0.43))
-    st.sidebar.info(f"Optimized for maximum F1: **{active_threshold:.2f}**")
-else:
-    active_threshold = st.sidebar.slider("Custom Decision Threshold", 0.05, 0.95, 0.50, 0.01)
+    st.sidebar.info("Decision threshold: 0.50")
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 📋 Preprocessing Specifications")
-st.sidebar.markdown(f"""
-- **Sample Rate:** {SR} Hz
-- **Target Duration:** {DURATION} sec
-- **Mel Filter Bins:** {N_MELS}
-- **FFT Size / Hop:** {N_FFT} / {HOP_LENGTH}
-- **Input Tensor:** `[1, 1, 128, 157]`
-- **Inference Mode:** CPU-Only
-""")
+elif threshold_mode == "Max F1 Sensitivity":
+    default_f1 = 0.50 if model_key == "CNN" else 0.26
+    active_threshold = float(
+        cfg.get("best_f1_threshold", default_f1)
+    )
+    st.sidebar.info(
+        f"F1 operating threshold: {active_threshold:.2f}"
+    )
+
+else:
+    active_threshold = st.sidebar.slider(
+        "Custom Decision Threshold",
+        min_value=0.05,
+        max_value=0.95,
+        value=0.26 if model_key == "CNN-GRU" else 0.50,
+        step=0.01
+    )
+
 
 # ------------------------------------------------------------------------------
 # Main Content: Input Audio Selection
@@ -203,45 +174,150 @@ with tab_upload:
         audio_bytes = uploaded_file.read()
         audio_source_desc = f"Uploaded File: {uploaded_file.name}"
 
+
+
 with tab_samples:
-    st.markdown("##### Test with pre-verified audio clips from the MIMII benchmark dataset:")
+    st.markdown(
+        "##### Test with pre-verified audio clips from the MIMII benchmark dataset:"
+    )
+
     col_mach, col_cond, col_label = st.columns(3)
-    
+
     with col_mach:
-        sample_mach = st.selectbox("Machine Type", ["fan", "pump", "slider", "valve"], index=0)
+        sample_mach = st.selectbox(
+            "Machine Type",
+            ["fan", "pump", "slider", "valve"],
+            index=0,
+        )
+
     with col_cond:
-        sample_cond = st.selectbox("Noise Level", ["6_dB (Low Noise)", "0_dB (Moderate)", "-6_dB (High Noise)"], index=0)
+        sample_cond = st.selectbox(
+            "Noise Level",
+            [
+                "6_dB (Low Noise)",
+                "0_dB (Moderate)",
+                "-6_dB (High Noise)",
+            ],
+            index=0,
+        )
+
     with col_label:
-        sample_label = st.selectbox("Ground Truth Condition", ["normal", "abnormal"], index=0)
+        sample_label = st.selectbox(
+            "Ground Truth Condition",
+            ["normal", "abnormal"],
+            index=0,
+        )
 
     cond_clean = sample_cond.split()[0]
-    sample_dir = os.path.join(PROJECT_DIR, f"{cond_clean}_{sample_mach}", sample_mach, "id_00", sample_label)
-    
+
+    sample_dir = (
+        PROJECT_DIR
+        / f"{cond_clean}_{sample_mach}"
+        / sample_mach
+        / "id_00"
+        / sample_label
+    )
+
     available_files = []
-    if os.path.isdir(sample_dir):
-        available_files = [f for f in os.listdir(sample_dir) if f.endswith(".wav")][:20]
+
+    if sample_dir.is_dir():
+        available_files = sorted(
+            f.name for f in sample_dir.glob("*.wav")
+        )[:20]
 
     if available_files:
-        chosen_sample = st.selectbox("Select Sample Clip", available_files, index=0)
-        sample_full_path = os.path.join(sample_dir, chosen_sample)
+        chosen_sample = st.selectbox(
+            "Select Sample Clip",
+            available_files,
+            index=0,
+        )
+
+        sample_full_path = sample_dir / chosen_sample
+
         if st.button("Load Selected Dataset Clip"):
-            with open(sample_full_path, "rb") as f:
-                audio_bytes = f.read()
-            audio_source_desc = f"MIMII Sample: {sample_mach.upper()} ({cond_clean}, {sample_label.upper()}) - {chosen_sample}"
+            audio_bytes = sample_full_path.read_bytes()
+            audio_source_desc = (
+                f"MIMII Sample: {sample_mach.upper()} "
+                f"({cond_clean}, {sample_label.upper()}) - "
+                f"{chosen_sample}"
+            )
     else:
-        st.warning(f"No audio clips found at: {sample_dir}")
+        st.info(
+            "Dataset samples are unavailable in this deployment. "
+            "Use the Audio Upload tab, or add the dataset files "
+            "to the expected repository folders."
+        )
+
+
+
 
 with tab_benchmark:
     st.markdown("##### Measured Test Set Performance Comparison:")
-    overall_csv = os.path.join(PROJECT_DIR, "outputs", "metrics", "overall_model_evaluation.csv")
-    if os.path.exists(overall_csv):
+
+    overall_csv = (
+        PROJECT_DIR / "outputs" / "metrics"
+        / "overall_model_evaluation.csv"
+    )
+
+    if overall_csv.is_file():
         df_overall = pd.read_csv(overall_csv)
-        st.dataframe(df_overall[df_overall["split"] == "Test"].style.format({
-            "accuracy": "{:.2%}", "precision": "{:.2%}", "recall": "{:.2%}",
-            "f1": "{:.2%}", "roc_auc": "{:.4f}", "false_alarm_rate_fpr": "{:.2%}",
-            "missed_fault_rate_fnr": "{:.2%}", "mean_latency_ms": "{:.2f} ms"
-        }))
-    st.image(os.path.join(PROJECT_DIR, "outputs", "figures", "noise_condition_metrics.png"), caption="Performance Across Background Noise Conditions")
+
+        if "split" in df_overall.columns:
+            test_df = df_overall[
+                df_overall["split"].astype(str).str.lower() == "test"
+            ]
+
+            if not test_df.empty:
+                formatters = {
+                    col: fmt
+                    for col, fmt in {
+                        "accuracy": "{:.2%}",
+                        "precision": "{:.2%}",
+                        "recall": "{:.2%}",
+                        "f1": "{:.2%}",
+                        "roc_auc": "{:.4f}",
+                        "false_alarm_rate_fpr": "{:.2%}",
+                        "missed_fault_rate_fnr": "{:.2%}",
+                        "mean_latency_ms": "{:.2f} ms",
+                    }.items()
+                    if col in test_df.columns
+                }
+
+                st.dataframe(
+                    test_df.style.format(formatters),
+                    use_container_width=True
+                )
+            else:
+                st.info("No test-split rows were found in the metrics file.")
+        else:
+            st.warning("The metrics file does not contain a 'split' column.")
+    else:
+        st.info(
+            "Benchmark metrics are not included in this deployment yet. "
+            "Model predictions can still be made in the Audio Upload tab."
+        )
+
+    benchmark_figure = (
+        PROJECT_DIR / "outputs" / "figures"
+        / "noise_condition_metrics.png"
+    )
+
+    if benchmark_figure.is_file():
+        st.image(
+            str(benchmark_figure),
+            caption="Performance Across Background Noise Conditions",
+            use_container_width=True
+        )
+    else:
+        st.info(
+            "The noise-condition benchmark figure is unavailable "
+            "in the deployed repository."
+        )
+
+
+# ------------------------------------------------------------------------------
+# Audio Processing & Prediction Execution
+# ------------------------------------------------------------------------------
 
 # ------------------------------------------------------------------------------
 # Audio Processing & Prediction Execution
@@ -257,19 +333,131 @@ if audio_bytes is not None:
         t_prep_start = time.perf_counter()
         buffer = io.BytesIO(audio_bytes)
         log_mel = preprocess_audio_file(buffer)
-        input_tensor = prepare_input_tensor(log_mel, device="cpu")
-        prep_latency_ms = (time.perf_counter() - t_prep_start) * 1000
+
+        # Both selectable models are improved architectures.
+        train_mean = 0.6007688045501709
+        train_std = 0.14802886545658112
+
+        model_input = (
+            log_mel - train_mean
+        ) / (train_std + 1e-6)
+
+        input_tensor = prepare_input_tensor(
+            model_input.astype(np.float32),
+            device="cpu",
+        )
+
+        prep_latency_ms = (
+            time.perf_counter() - t_prep_start
+        ) * 1000
 
         # Run selected model
         model = get_model(model_choice)
+
         t_infer_start = time.perf_counter()
+
         with torch.no_grad():
             logit = model(input_tensor).item()
-            prob_abnormal = torch.sigmoid(torch.tensor(logit)).item()
-        infer_latency_ms = (time.perf_counter() - t_infer_start) * 1000
+            prob_abnormal = torch.sigmoid(
+                torch.tensor(logit)
+            ).item()
 
-        # Classification decision based on active threshold
-        is_abnormal = (prob_abnormal >= active_threshold)
+        infer_latency_ms = (
+            time.perf_counter() - t_infer_start
+        ) * 1000
+
+        is_abnormal = prob_abnormal >= active_threshold
+
+        st.markdown("### 🔍 Diagnostic Screening Result")
+
+        col_res, col_metrics = st.columns([1.2, 1.8])
+
+        with col_res:
+            if is_abnormal:
+                st.markdown(
+                    f"""
+                    <div class="status-abnormal">
+                        <h2>🚨 ABNORMAL FAULT DETECTED</h2>
+                        <p>Acoustic anomaly detected. Further inspection is recommended.</p>
+                        <div>Abnormal Probability: {prob_abnormal * 100:.1f}%</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f"""
+                    <div class="status-normal">
+                        <h2>✅ NORMAL OPERATION</h2>
+                        <p>No anomaly was flagged at the selected decision threshold.</p>
+                        <div>Abnormal Probability: {prob_abnormal * 100:.1f}%</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        with col_metrics:
+            m1, m2, m3 = st.columns(3)
+
+            with m1:
+                st.metric(
+                    "Abnormal Probability",
+                    f"{prob_abnormal * 100:.1f}%",
+                )
+
+            with m2:
+                st.metric(
+                    "Decision Threshold",
+                    f"{active_threshold:.2f}",
+                )
+
+            with m3:
+                st.metric(
+                    "Inference Latency",
+                    f"{infer_latency_ms:.2f} ms",
+                )
+
+            st.write("**Abnormal Probability Meter**")
+            st.progress(
+                float(min(max(prob_abnormal, 0.0), 1.0))
+            )
+            st.caption(
+                f"Values ≥ {active_threshold:.2f} are flagged as abnormal. "
+                f"Preprocessing time: {prep_latency_ms:.1f} ms."
+            )
+
+        # Spectrogram uses the original normalized log-Mel features.
+        st.markdown("---")
+        st.subheader("📈 Normalized Log-Mel Spectrogram")
+
+        fig, ax = plt.subplots(figsize=(10, 3.2), dpi=150)
+        im = ax.imshow(
+            log_mel,
+            origin="lower",
+            aspect="auto",
+            cmap="magma",
+        )
+        ax.set_title("128 Mel Bins × Time Frames")
+        ax.set_xlabel("Time Frames")
+        ax.set_ylabel("Mel Frequency Bins")
+        fig.colorbar(im, ax=ax, label="Normalized Energy")
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+    except Exception as err:
+        st.error(f"Audio processing or prediction failed: {err}")
+        st.info(
+            "Check the WAV file, preprocessing dependencies, checkpoint "
+            "paths, and model input shape."
+        )
+
+else:
+    st.info(
+        "👈 Upload an audio file or load a dataset sample to run "
+        "the acoustic screening demonstration."
+    )
+
 
         # ----------------------------------------------------------------------
         # Prediction Output Section
