@@ -160,96 +160,112 @@ else:
 # ------------------------------------------------------------------------------
 tab_upload, tab_samples, tab_benchmark = st.tabs(["📁 Upload WAV Audio", "🎵 Dataset Benchmark Samples", "📊 Benchmark Performance"])
 
-audio_bytes = None
-audio_source_desc = ""
 
-with tab_upload:
-    st.markdown("##### Upload a 16 kHz WAV recording of industrial machinery:")
-    uploaded_file = st.file_uploader(
-        "Choose a .wav file",
-        type=["wav"],
-        help="Upload any WAV audio recording. Files longer than 5 seconds will be trimmed; shorter files will be zero-padded."
-    )
-    if uploaded_file is not None:
-        audio_bytes = uploaded_file.read()
-        audio_source_desc = f"Uploaded File: {uploaded_file.name}"
+if audio_bytes is not None:
+    st.markdown("---")
+    st.subheader("🎧 Audio Playback & Analysis")
+    st.write(f"**Source:** `{audio_source_desc}`")
+    st.audio(audio_bytes, format="audio/wav")
 
+    try:
+        # Preprocessing
+        t_prep_start = time.perf_counter()
+        buffer = io.BytesIO(audio_bytes)
+        log_mel = preprocess_audio_file(buffer)
 
+        train_mean = 0.6007688045501709
+        train_std = 0.14802886545658112
 
-with tab_samples:
-    st.markdown(
-        "##### Test with pre-verified audio clips from the MIMII benchmark dataset:"
-    )
+        model_input = (
+            log_mel - train_mean
+        ) / (train_std + 1e-6)
 
-    col_mach, col_cond, col_label = st.columns(3)
-
-    with col_mach:
-        sample_mach = st.selectbox(
-            "Machine Type",
-            ["fan", "pump", "slider", "valve"],
-            index=0,
+        input_tensor = prepare_input_tensor(
+            model_input.astype(np.float32),
+            device="cpu",
         )
 
-    with col_cond:
-        sample_cond = st.selectbox(
-            "Noise Level",
-            [
-                "6_dB (Low Noise)",
-                "0_dB (Moderate)",
-                "-6_dB (High Noise)",
-            ],
-            index=0,
+        prep_latency_ms = (
+            time.perf_counter() - t_prep_start
+        ) * 1000
+
+        # Run selected model
+        model = get_model(model_choice)
+
+        t_infer_start = time.perf_counter()
+        with torch.no_grad():
+            logit = model(input_tensor).item()
+            prob_abnormal = torch.sigmoid(
+                torch.tensor(logit)
+            ).item()
+
+        infer_latency_ms = (
+            time.perf_counter() - t_infer_start
+        ) * 1000
+
+        is_abnormal = prob_abnormal >= active_threshold
+
+        st.markdown("### 🔍 Diagnostic Screening Result")
+
+        col_res, col_metrics = st.columns([1.2, 1.8])
+
+        with col_res:
+            if is_abnormal:
+                st.warning(
+                    f"ABNORMAL FAULT DETECTED — "
+                    f"Abnormal probability: {prob_abnormal:.1%}"
+                )
+            else:
+                st.success(
+                    f"NORMAL OPERATION — "
+                    f"Abnormal probability: {prob_abnormal:.1%}"
+                )
+
+        with col_metrics:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Abnormal Probability", f"{prob_abnormal:.1%}")
+            m2.metric("Decision Threshold", f"{active_threshold:.2f}")
+            m3.metric("Inference Latency", f"{infer_latency_ms:.2f} ms")
+
+        st.progress(
+            float(min(max(prob_abnormal, 0.0), 1.0))
         )
 
-    with col_label:
-        sample_label = st.selectbox(
-            "Ground Truth Condition",
-            ["normal", "abnormal"],
-            index=0,
+        st.caption(
+            f"Preprocessing time: {prep_latency_ms:.1f} ms"
         )
 
-    cond_clean = sample_cond.split()[0]
+        # Display original log-Mel spectrogram
+        st.markdown("---")
+        st.subheader("📈 Normalized Log-Mel Spectrogram")
 
-    sample_dir = (
-        PROJECT_DIR
-        / f"{cond_clean}_{sample_mach}"
-        / sample_mach
-        / "id_00"
-        / sample_label
-    )
-
-    available_files = []
-
-    if sample_dir.is_dir():
-        available_files = sorted(
-            f.name for f in sample_dir.glob("*.wav")
-        )[:20]
-
-    if available_files:
-        chosen_sample = st.selectbox(
-            "Select Sample Clip",
-            available_files,
-            index=0,
+        fig, ax = plt.subplots(figsize=(10, 3.2), dpi=150)
+        im = ax.imshow(
+            log_mel,
+            origin="lower",
+            aspect="auto",
+            cmap="magma",
         )
+        ax.set_title("128 Mel Bins × Time Frames")
+        ax.set_xlabel("Time Frames")
+        ax.set_ylabel("Mel Frequency Bins")
+        fig.colorbar(im, ax=ax, label="Normalized Energy")
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
 
-        sample_full_path = sample_dir / chosen_sample
-
-        if st.button("Load Selected Dataset Clip"):
-            audio_bytes = sample_full_path.read_bytes()
-            audio_source_desc = (
-                f"MIMII Sample: {sample_mach.upper()} "
-                f"({cond_clean}, {sample_label.upper()}) - "
-                f"{chosen_sample}"
-            )
-    else:
+    except Exception as err:
+        st.error(f"Audio processing or prediction failed: {err}")
         st.info(
-            "Dataset samples are unavailable in this deployment. "
-            "Use the Audio Upload tab, or add the dataset files "
-            "to the expected repository folders."
+            "Check the WAV file, dependencies, checkpoint paths, "
+            "and model input shape."
         )
 
-
-
+else:
+    st.info(
+        "Upload an audio file or load a dataset sample to run "
+        "the acoustic screening demonstration."
+    )
 
 with tab_benchmark:
     st.markdown("##### Measured Test Set Performance Comparison:")
