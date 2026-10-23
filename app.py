@@ -159,9 +159,10 @@ else:
 # Main Content: Input Audio Selection
 # ------------------------------------------------------------------------------
 
-# ------------------------------------------------------------------
-# Main application tabs
-# ------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+# Main Content: Input Audio Selection
+# ------------------------------------------------------------------------------
 
 tab_upload, tab_samples, tab_benchmark = st.tabs([
     "📁 Upload WAV Audio",
@@ -169,17 +170,9 @@ tab_upload, tab_samples, tab_benchmark = st.tabs([
     "📊 Benchmark Performance",
 ])
 
-# Shared audio state persisted across Streamlit reruns
-audio_bytes = st.session_state.get("audio_to_analyze")
-audio_source_desc = st.session_state.get(
-    "audio_source_to_analyze",
-    "No audio selected",
-)
-
 # ------------------------------------------------------------------
-# Tab 1: Upload audio and run prediction
+# Tab 1: Upload WAV audio
 # ------------------------------------------------------------------
-
 
 with tab_upload:
     st.subheader("Upload machine audio")
@@ -196,7 +189,7 @@ with tab_upload:
         if st.button("Analyze Uploaded Audio", key="analyze_upload"):
             st.session_state["audio_to_analyze"] = uploaded_file.getvalue()
             st.session_state["audio_source_to_analyze"] = uploaded_file.name
-            st.session_state["run_prediction"] = True
+            st.success(f"Audio selected: {uploaded_file.name}")
 
 # ------------------------------------------------------------------
 # Tab 2: Dataset benchmark samples
@@ -256,28 +249,29 @@ with tab_samples:
             key="chosen_sample",
         )
 
-        if st.button("Load and Analyze Dataset Sample"):
-            st.session_state["audio_to_analyze"] = (
-                chosen_sample.read_bytes()
-            )
+        if st.button("Load Dataset Sample", key="load_dataset_sample"):
+            st.session_state["audio_to_analyze"] = chosen_sample.read_bytes()
             st.session_state["audio_source_to_analyze"] = (
                 f"MIMII {sample_mach} | {cond_clean} | "
                 f"{sample_label} | {chosen_sample.name}"
             )
-            st.success("Sample loaded. Open the Upload WAV Audio tab to analyze it.")
+            st.success(
+                "Dataset sample loaded. Click Run Prediction below."
+            )
     else:
         st.info(
-            "Dataset audio files are not available in this deployment. "
-            "You can still upload your own WAV file in the first tab."
+            "Dataset audio files are not included at the expected path "
+            "in this deployment. You can upload a WAV file in the first tab."
         )
 
 # ------------------------------------------------------------------
-# Run prediction for the selected audio
+# Prediction: Runs only when the user clicks the button
 # ------------------------------------------------------------------
 
 audio_to_analyze = st.session_state.get("audio_to_analyze")
 audio_source_desc = st.session_state.get(
-    "audio_source_to_analyze", "No audio selected"
+    "audio_source_to_analyze",
+    "No audio selected",
 )
 
 if audio_to_analyze is not None:
@@ -286,8 +280,7 @@ if audio_to_analyze is not None:
     st.write(f"**Source:** {audio_source_desc}")
     st.audio(audio_to_analyze, format="audio/wav")
 
-    st.session_state["run_prediction"] = True
-    st.session_state["run_prediction"] = False
+    if st.button("Run Prediction", key="run_prediction_button"):
         try:
             # Preprocess audio
             prep_start = time.perf_counter()
@@ -295,6 +288,7 @@ if audio_to_analyze is not None:
             audio_buffer = io.BytesIO(audio_to_analyze)
             log_mel = preprocess_audio_file(audio_buffer)
 
+            # Training-split normalization
             train_mean = 0.6007688045501709
             train_std = 0.14802886545658112
 
@@ -311,6 +305,7 @@ if audio_to_analyze is not None:
                 time.perf_counter() - prep_start
             ) * 1000
 
+            # Load selected model and predict
             model = get_model(model_choice)
             model.eval()
 
@@ -326,6 +321,7 @@ if audio_to_analyze is not None:
 
             is_abnormal = probability >= active_threshold
 
+            # Display prediction
             st.markdown("### 🔍 Diagnostic Screening Result")
 
             result_col, metrics_col = st.columns([1.2, 1.8])
@@ -359,37 +355,45 @@ if audio_to_analyze is not None:
                     f"{infer_latency_ms:.2f} ms",
                 )
 
-            st.progress(
-                float(min(max(probability, 0.0), 1.0))
-            )
+            st.progress(float(min(max(probability, 0.0), 1.0)))
             st.caption(
                 f"Preprocessing time: {prep_latency_ms:.1f} ms"
             )
 
-            # Spectrogram visualization
+            # Display log-Mel spectrogram
             st.markdown("---")
             st.subheader("📈 Normalized Log-Mel Spectrogram")
 
             fig, ax = plt.subplots(figsize=(10, 3.2), dpi=150)
+
             image = ax.imshow(
                 log_mel,
                 origin="lower",
                 aspect="auto",
                 cmap="magma",
             )
+
             ax.set_title("128 Mel Bins × Time Frames")
             ax.set_xlabel("Time Frames")
             ax.set_ylabel("Mel Frequency Bins")
-            fig.colorbar(image, ax=ax, label="Normalized Energy")
+
+            fig.colorbar(
+                image,
+                ax=ax,
+                label="Normalized Energy",
+            )
+
             fig.tight_layout()
             st.pyplot(fig)
             plt.close(fig)
 
         except Exception as err:
-            st.error(f"Audio processing or prediction failed: {err}")
+            st.error(
+                f"Audio processing or prediction failed: {err}"
+            )
             st.info(
-                "Check the WAV file, dependencies, checkpoint paths, "
-                "and model input shape."
+                "Check the audio file, preprocessing dependencies, "
+                "checkpoint paths, and model input shape."
             )
 
 # ------------------------------------------------------------------
@@ -458,140 +462,3 @@ with tab_benchmark:
         )
     else:
         st.info("The noise-condition benchmark figure is unavailable.")
-
-
-
-# ------------------------------------------------------------------
-# Audio Processing and Prediction
-# ------------------------------------------------------------------
-
-if (
-    audio_bytes is not None
-    and st.session_state.get("run_prediction", False)
-):
-    st.markdown("---")
-    st.subheader("🎧 Audio Playback & Analysis")
-    st.write(f"**Source:** {audio_source_desc}")
-    st.audio(audio_bytes, format="audio/wav")
-
-    try:
-        st.session_state["run_prediction"] = False
-        # Preprocess audio
-        prep_start = time.perf_counter()
-
-        audio_buffer = io.BytesIO(audio_bytes)
-        log_mel = preprocess_audio_file(audio_buffer)
-
-        # Training-split normalization for improved models
-        train_mean = 0.6007688045501709
-        train_std = 0.14802886545658112
-
-        standardized_features = (
-            log_mel - train_mean
-        ) / (train_std + 1e-6)
-
-        input_tensor = prepare_input_tensor(
-            standardized_features.astype(np.float32),
-            device="cpu",
-        )
-
-        prep_latency_ms = (
-            time.perf_counter() - prep_start
-        ) * 1000
-
-        # Load model and predict
-        model = get_model(model_choice)
-
-        infer_start = time.perf_counter()
-
-        with torch.no_grad():
-            logits = model(input_tensor)
-            probability = torch.sigmoid(logits).item()
-
-        infer_latency_ms = (
-            time.perf_counter() - infer_start
-        ) * 1000
-
-        is_abnormal = probability >= active_threshold
-
-        # Display prediction
-        st.markdown("### 🔍 Diagnostic Screening Result")
-
-        result_col, metrics_col = st.columns([1.2, 1.8])
-
-        with result_col:
-            if is_abnormal:
-                st.error("🚨 ABNORMAL FAULT DETECTED")
-                st.write(
-                    "An acoustic anomaly was detected. "
-                    "Further inspection is recommended."
-                )
-            else:
-                st.success("✅ NORMAL OPERATION")
-                st.write(
-                    "No anomaly was flagged at the selected threshold."
-                )
-
-        with metrics_col:
-            metric1, metric2, metric3 = st.columns(3)
-
-            metric1.metric(
-                "Abnormal Probability",
-                f"{probability:.1%}",
-            )
-            metric2.metric(
-                "Decision Threshold",
-                f"{active_threshold:.2f}",
-            )
-            metric3.metric(
-                "Inference Latency",
-                f"{infer_latency_ms:.2f} ms",
-            )
-
-        st.progress(
-            float(min(max(probability, 0.0), 1.0))
-        )
-
-        st.caption(
-            f"Preprocessing time: {prep_latency_ms:.1f} ms"
-        )
-
-        # Spectrogram visualization
-        st.markdown("---")
-        st.subheader("📈 Normalized Log-Mel Spectrogram")
-
-        fig, ax = plt.subplots(figsize=(10, 3.2), dpi=150)
-
-        image = ax.imshow(
-            log_mel,
-            origin="lower",
-            aspect="auto",
-            cmap="magma",
-        )
-
-        ax.set_title("128 Mel Bins × Time Frames")
-        ax.set_xlabel("Time Frames")
-        ax.set_ylabel("Mel Frequency Bins")
-
-        fig.colorbar(
-            image,
-            ax=ax,
-            label="Normalized Energy",
-        )
-
-        fig.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
-
-    except Exception as err:
-        st.error(f"Audio processing or prediction failed: {err}")
-        st.info(
-            "Check the WAV file, dependencies, checkpoint paths, "
-            "and model input shape."
-        )
-
-else:
-    st.info(
-        "👈 Upload an audio file or load a dataset sample to run "
-        "the acoustic screening demonstration."
-    )
