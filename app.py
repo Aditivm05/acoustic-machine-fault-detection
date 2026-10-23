@@ -334,147 +334,139 @@ with tab_benchmark:
 # ------------------------------------------------------------------------------
 
 
+
+# ------------------------------------------------------------------------------
+# Audio Processing & Prediction
+# ------------------------------------------------------------------------------
+
 if audio_bytes is not None:
     st.markdown("---")
-    st.subheader("🎧 Audio Playback & Analysis")
-    st.write(f"**Source:** `{audio_source_desc}`")
+    st.subheader("Audio Playback & Analysis")
+    st.write(f"**Source:** {audio_source_desc}")
     st.audio(audio_bytes, format="audio/wav")
 
     try:
-        t_prep_start = time.perf_counter()
-        buffer = io.BytesIO(audio_bytes)
-        log_mel = preprocess_audio_file(buffer)
+        # 1. Preprocess the uploaded audio
+        prep_start = time.perf_counter()
 
+        audio_buffer = io.BytesIO(audio_bytes)
+        log_mel = preprocess_audio_file(audio_buffer)
+
+        # Training-split normalization for the improved models
         train_mean = 0.6007688045501709
         train_std = 0.14802886545658112
-        model_input = (log_mel - train_mean) / (train_std + 1e-6)
+
+        standardized_features = (
+            log_mel - train_mean
+        ) / (train_std + 1e-6)
 
         input_tensor = prepare_input_tensor(
-            model_input.astype(np.float32),
+            standardized_features.astype(np.float32),
             device="cpu",
         )
-        prep_latency_ms = (time.perf_counter() - t_prep_start) * 1000
 
+        prep_latency_ms = (
+            time.perf_counter() - prep_start
+        ) * 1000
+
+        # 2. Load the selected model and predict
         model = get_model(model_choice)
 
-        t_infer_start = time.perf_counter()
+        infer_start = time.perf_counter()
+
         with torch.no_grad():
-            logit = model(input_tensor).item()
-            prob_abnormal = torch.sigmoid(torch.tensor(logit)).item()
+            logits = model(input_tensor)
+            probability = torch.sigmoid(logits).item()
 
-        infer_latency_ms = (time.perf_counter() - t_infer_start) * 1000
-        is_abnormal = prob_abnormal >= active_threshold
+        infer_latency_ms = (
+            time.perf_counter() - infer_start
+        ) * 1000
 
-        st.markdown("### 🔍 Diagnostic Screening Result")
-        col_res, col_metrics = st.columns([1.2, 1.8])
+        is_abnormal = probability >= active_threshold
 
-        with col_res:
+        # 3. Display prediction
+        st.markdown("### Diagnostic Screening Result")
+
+        result_col, metrics_col = st.columns([1.2, 1.8])
+
+        with result_col:
             if is_abnormal:
-                st.warning(
-                    f"ABNORMAL FAULT DETECTED — "
-                    f"Abnormal probability: {prob_abnormal:.1%}"
+                st.error("ABNORMAL FAULT DETECTED")
+                st.write(
+                    "An acoustic anomaly was detected. "
+                    "Further inspection is recommended."
                 )
             else:
-                st.success(
-                    f"NORMAL OPERATION — "
-                    f"Abnormal probability: {prob_abnormal:.1%}"
+                st.success("NORMAL OPERATION")
+                st.write(
+                    "No anomaly was flagged at the selected threshold."
                 )
 
-        with col_metrics:
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Abnormal Probability", f"{prob_abnormal:.1%}")
-            m2.metric("Decision Threshold", f"{active_threshold:.2f}")
-            m3.metric("Inference Latency", f"{infer_latency_ms:.2f} ms")
+        with metrics_col:
+            metric1, metric2, metric3 = st.columns(3)
 
-        st.progress(min(max(prob_abnormal, 0.0), 1.0))
-        st.caption(f"Preprocessing time: {prep_latency_ms:.1f} ms")
+            metric1.metric(
+                "Abnormal Probability",
+                f"{probability:.1%}",
+            )
+            metric2.metric(
+                "Decision Threshold",
+                f"{active_threshold:.2f}",
+            )
+            metric3.metric(
+                "Inference Latency",
+                f"{infer_latency_ms:.2f} ms",
+            )
 
+        st.progress(
+            float(min(max(probability, 0.0), 1.0))
+        )
+
+        st.caption(
+            f"Preprocessing time: {prep_latency_ms:.1f} ms"
+        )
+
+        # 4. Display the original log-Mel spectrogram
         st.markdown("---")
-        st.subheader("📈 Normalized Log-Mel Spectrogram")
+        st.subheader("Normalized Log-Mel Spectrogram")
+
         fig, ax = plt.subplots(figsize=(10, 3.2), dpi=150)
-        im = ax.imshow(log_mel, origin="lower", aspect="auto", cmap="magma")
+
+        image = ax.imshow(
+            log_mel,
+            origin="lower",
+            aspect="auto",
+            cmap="magma",
+        )
+
         ax.set_title("128 Mel Bins × Time Frames")
         ax.set_xlabel("Time Frames")
         ax.set_ylabel("Mel Frequency Bins")
-        fig.colorbar(im, ax=ax, label="Normalized Energy")
+
+        fig.colorbar(
+            image,
+            ax=ax,
+            label="Normalized Energy",
+        )
+
         fig.tight_layout()
         st.pyplot(fig)
         plt.close(fig)
 
     except Exception as err:
-        st.error(f"Audio processing or prediction failed: {err}")
-        st.info(
-            "Check the WAV file, dependencies, checkpoint paths, "
-            "and model input shape."
+        st.error(
+            f"Audio processing or prediction failed: {err}"
         )
+        st.info(
+            "Check the audio file, preprocessing dependencies, "
+            "checkpoint paths, and model input shape."
+        )
+
 else:
     st.info(
         "Upload an audio file or load a dataset sample to run "
         "the acoustic screening demonstration."
     )
-
-
-        # ----------------------------------------------------------------------
-        # Prediction Output Section
-        # ----------------------------------------------------------------------
-        st.markdown("### 🔍 Diagnostic Screening Result")
-        
-        col_res, col_metrics = st.columns([1.2, 1.8])
-
-        with col_res:
-            if is_abnormal:
-                st.markdown(f"""
-                <div class="status-abnormal">
-                    <h2 style="margin:0; font-size:1.8rem;">🚨 ABNORMAL FAULT DETECTED</h2>
-                    <p style="margin-top:8px; font-size:1.0rem;">
-                        Acoustic anomaly detected. The sound signature deviates significantly from baseline healthy operational harmonics.
-                    </p>
-                    <div style="font-size:1.1rem; font-weight:600; margin-top:12px;">
-                        Abnormal Probability: {prob_abnormal*100:.1f}%
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div class="status-normal">
-                    <h2 style="margin:0; font-size:1.8rem;">✅ NORMAL OPERATION</h2>
-                    <p style="margin-top:8px; font-size:1.0rem;">
-                        Machine audio matches healthy acoustic vibration profile. No critical acoustic degradation detected.
-                    </p>
-                    <div style="font-size:1.1rem; font-weight:600; margin-top:12px;">
-                        Abnormal Probability: {prob_abnormal*100:.1f}%
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-        with col_metrics:
-            m1, m2, m3 = st.columns(3)
-            with m1:
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-label">Abnormal Prob</div>
-                    <div class="metric-value">{prob_abnormal*100:.1f}%</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with m2:
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-label">Decision Threshold</div>
-                    <div class="metric-value">{active_threshold:.2f}</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with m3:
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-label">Inference Latency</div>
-                    <div class="metric-value">{infer_latency_ms:.2f} ms</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            st.write("")
-            st.markdown(f"**Abnormal Probability Meter:**")
-            st.progress(float(min(max(prob_abnormal, 0.0), 1.0)))
-            st.caption(f"Decision Boundary: Values ≥ **{active_threshold:.2f}** flag as Abnormal. Preprocessing time: **{prep_latency_ms:.1f} ms**.")
 
         # ----------------------------------------------------------------------
         # Spectrogram Visualization
