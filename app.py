@@ -203,7 +203,7 @@ if audio_bytes is not None:
             time.perf_counter() - t_infer_start
         ) * 1000
 
-        is_abnormal = prob_abnormal >= active_threshold
+              is_abnormal = prob_abnormal >= active_threshold
 
         st.markdown("### 🔍 Diagnostic Screening Result")
 
@@ -220,7 +220,6 @@ if audio_bytes is not None:
                     f"NORMAL OPERATION — "
                     f"Abnormal probability: {prob_abnormal:.1%}"
                 )
-
         with col_metrics:
             m1, m2, m3 = st.columns(3)
             m1.metric("Abnormal Probability", f"{prob_abnormal:.1%}")
