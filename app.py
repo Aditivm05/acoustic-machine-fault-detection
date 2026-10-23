@@ -158,118 +158,257 @@ else:
 # ------------------------------------------------------------------------------
 # Main Content: Input Audio Selection
 # ------------------------------------------------------------------------------
-tab_upload, tab_samples, tab_benchmark = st.tabs(["📁 Upload WAV Audio", "🎵 Dataset Benchmark Samples", "📊 Benchmark Performance"])
 
+# ------------------------------------------------------------------
+# Main application tabs
+# ------------------------------------------------------------------
 
-if audio_bytes is not None:
-    st.markdown("---")
-    st.subheader("🎧 Audio Playback & Analysis")
-    st.write(f"**Source:** `{audio_source_desc}`")
-    st.audio(audio_bytes, format="audio/wav")
+tab_upload, tab_samples, tab_benchmark = st.tabs([
+    "📁 Upload WAV Audio",
+    "🎵 Dataset Benchmark Samples",
+    "📊 Benchmark Performance",
+])
 
-    try:
-        # Preprocessing
-        t_prep_start = time.perf_counter()
-        buffer = io.BytesIO(audio_bytes)
-        log_mel = preprocess_audio_file(buffer)
+# Shared audio state for the current Streamlit run
+audio_bytes = None
+audio_source_desc = "No audio selected"
 
-        train_mean = 0.6007688045501709
-        train_std = 0.14802886545658112
+# ------------------------------------------------------------------
+# Tab 1: Upload audio and run prediction
+# ------------------------------------------------------------------
 
-        model_input = (
-            log_mel - train_mean
-        ) / (train_std + 1e-6)
+with tab_upload:
+    st.subheader("Upload machine audio")
 
-        input_tensor = prepare_input_tensor(
-            model_input.astype(np.float32),
-            device="cpu",
-        )
-
-        prep_latency_ms = (
-            time.perf_counter() - t_prep_start
-        ) * 1000
-
-        # Run selected model
-        model = get_model(model_choice)
-
-        t_infer_start = time.perf_counter()
-        with torch.no_grad():
-            logit = model(input_tensor).item()
-            prob_abnormal = torch.sigmoid(
-                torch.tensor(logit)
-            ).item()
-
-        infer_latency_ms = (
-            time.perf_counter() - t_infer_start
-        ) * 1000
-        is_abnormal = prob_abnormal >= active_threshold
-
-        st.markdown("### 🔍 Diagnostic Screening Result")
-
-        col_res, col_metrics = st.columns([1.2, 1.8])
-
-        with col_res:
-            if is_abnormal:
-                st.warning(
-                    f"ABNORMAL FAULT DETECTED — "
-                    f"Abnormal probability: {prob_abnormal:.1%}"
-                )
-            else:
-                st.success(
-                    f"NORMAL OPERATION — "
-                    f"Abnormal probability: {prob_abnormal:.1%}"
-                )
-        with col_metrics:
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Abnormal Probability", f"{prob_abnormal:.1%}")
-            m2.metric("Decision Threshold", f"{active_threshold:.2f}")
-            m3.metric("Inference Latency", f"{infer_latency_ms:.2f} ms")
-
-        st.progress(
-            float(min(max(prob_abnormal, 0.0), 1.0))
-        )
-
-        st.caption(
-            f"Preprocessing time: {prep_latency_ms:.1f} ms"
-        )
-
-        # Display original log-Mel spectrogram
-        st.markdown("---")
-        st.subheader("📈 Normalized Log-Mel Spectrogram")
-
-        fig, ax = plt.subplots(figsize=(10, 3.2), dpi=150)
-        im = ax.imshow(
-            log_mel,
-            origin="lower",
-            aspect="auto",
-            cmap="magma",
-        )
-        ax.set_title("128 Mel Bins × Time Frames")
-        ax.set_xlabel("Time Frames")
-        ax.set_ylabel("Mel Frequency Bins")
-        fig.colorbar(im, ax=ax, label="Normalized Energy")
-        fig.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
-
-    except Exception as err:
-        st.error(f"Audio processing or prediction failed: {err}")
-        st.info(
-            "Check the WAV file, dependencies, checkpoint paths, "
-            "and model input shape."
-        )
-
-else:
-    st.info(
-        "Upload an audio file or load a dataset sample to run "
-        "the acoustic screening demonstration."
+    uploaded_file = st.file_uploader(
+        "Choose a WAV audio file",
+        type=["wav"],
+        key="audio_upload",
     )
 
+    if uploaded_file is not None:
+        audio_bytes = uploaded_file.getvalue()
+        audio_source_desc = uploaded_file.name
+
+    if audio_bytes is not None:
+        st.audio(audio_bytes, format="audio/wav")
+
+        if st.button("Analyze Uploaded Audio", key="analyze_upload"):
+            st.session_state["audio_to_analyze"] = audio_bytes
+            st.session_state["audio_source_to_analyze"] = audio_source_desc
+
+# A dataset sample can also be analyzed after loading it.
+# This state is shared between the sample and upload tabs.
+if "audio_to_analyze" not in st.session_state:
+    st.session_state["audio_to_analyze"] = None
+
+if "audio_source_to_analyze" not in st.session_state:
+    st.session_state["audio_source_to_analyze"] = "No audio selected"
+
+# ------------------------------------------------------------------
+# Tab 2: Dataset benchmark samples
+# ------------------------------------------------------------------
+
+with tab_samples:
+    st.subheader("MIMII Dataset Benchmark Samples")
+
+    col_mach, col_cond, col_label = st.columns(3)
+
+    with col_mach:
+        sample_mach = st.selectbox(
+            "Machine Type",
+            ["fan", "pump", "slider", "valve"],
+            key="sample_machine",
+        )
+
+    with col_cond:
+        sample_cond = st.selectbox(
+            "Noise Level",
+            [
+                "6_dB (Low Noise)",
+                "0_dB (Moderate)",
+                "-6_dB (High Noise)",
+            ],
+            key="sample_noise",
+        )
+
+    with col_label:
+        sample_label = st.selectbox(
+            "Ground Truth Condition",
+            ["normal", "abnormal"],
+            key="sample_label",
+        )
+
+    cond_clean = sample_cond.split()[0]
+
+    sample_dir = (
+        PROJECT_DIR
+        / f"{cond_clean}_{sample_mach}"
+        / sample_mach
+        / "id_00"
+        / sample_label
+    )
+
+    available_files = (
+        sorted(sample_dir.glob("*.wav"))[:20]
+        if sample_dir.is_dir()
+        else []
+    )
+
+    if available_files:
+        chosen_sample = st.selectbox(
+            "Select Sample Clip",
+            available_files,
+            format_func=lambda path: path.name,
+            key="chosen_sample",
+        )
+
+        if st.button("Load and Analyze Dataset Sample"):
+            st.session_state["audio_to_analyze"] = (
+                chosen_sample.read_bytes()
+            )
+            st.session_state["audio_source_to_analyze"] = (
+                f"MIMII {sample_mach} | {cond_clean} | "
+                f"{sample_label} | {chosen_sample.name}"
+            )
+            st.success("Sample loaded. Open the Upload WAV Audio tab to analyze it.")
+    else:
+        st.info(
+            "Dataset audio files are not available in this deployment. "
+            "You can still upload your own WAV file in the first tab."
+        )
+
+# ------------------------------------------------------------------
+# Run prediction for the selected audio
+# ------------------------------------------------------------------
+
+audio_to_analyze = st.session_state.get("audio_to_analyze")
+audio_source_desc = st.session_state.get(
+    "audio_source_to_analyze", "No audio selected"
+)
+
+if audio_to_analyze is not None:
+    st.markdown("---")
+    st.subheader("🎧 Audio Playback & Analysis")
+    st.write(f"**Source:** {audio_source_desc}")
+    st.audio(audio_to_analyze, format="audio/wav")
+
+    if st.button("Run Prediction", key="run_prediction"):
+        try:
+            # Preprocess audio
+            prep_start = time.perf_counter()
+
+            audio_buffer = io.BytesIO(audio_to_analyze)
+            log_mel = preprocess_audio_file(audio_buffer)
+
+            train_mean = 0.6007688045501709
+            train_std = 0.14802886545658112
+
+            standardized_features = (
+                log_mel - train_mean
+            ) / (train_std + 1e-6)
+
+            input_tensor = prepare_input_tensor(
+                standardized_features.astype(np.float32),
+                device="cpu",
+            )
+
+            prep_latency_ms = (
+                time.perf_counter() - prep_start
+            ) * 1000
+
+            model = get_model(model_choice)
+            model.eval()
+
+            infer_start = time.perf_counter()
+
+            with torch.no_grad():
+                logits = model(input_tensor)
+                probability = torch.sigmoid(logits).item()
+
+            infer_latency_ms = (
+                time.perf_counter() - infer_start
+            ) * 1000
+
+            is_abnormal = probability >= active_threshold
+
+            st.markdown("### 🔍 Diagnostic Screening Result")
+
+            result_col, metrics_col = st.columns([1.2, 1.8])
+
+            with result_col:
+                if is_abnormal:
+                    st.error("🚨 ABNORMAL FAULT DETECTED")
+                    st.write(
+                        "An acoustic anomaly was detected. "
+                        "Further inspection is recommended."
+                    )
+                else:
+                    st.success("✅ NORMAL OPERATION")
+                    st.write(
+                        "No anomaly was flagged at the selected threshold."
+                    )
+
+            with metrics_col:
+                metric1, metric2, metric3 = st.columns(3)
+
+                metric1.metric(
+                    "Abnormal Probability",
+                    f"{probability:.1%}",
+                )
+                metric2.metric(
+                    "Decision Threshold",
+                    f"{active_threshold:.2f}",
+                )
+                metric3.metric(
+                    "Inference Latency",
+                    f"{infer_latency_ms:.2f} ms",
+                )
+
+            st.progress(
+                float(min(max(probability, 0.0), 1.0))
+            )
+            st.caption(
+                f"Preprocessing time: {prep_latency_ms:.1f} ms"
+            )
+
+            # Spectrogram visualization
+            st.markdown("---")
+            st.subheader("📈 Normalized Log-Mel Spectrogram")
+
+            fig, ax = plt.subplots(figsize=(10, 3.2), dpi=150)
+            image = ax.imshow(
+                log_mel,
+                origin="lower",
+                aspect="auto",
+                cmap="magma",
+            )
+            ax.set_title("128 Mel Bins × Time Frames")
+            ax.set_xlabel("Time Frames")
+            ax.set_ylabel("Mel Frequency Bins")
+            fig.colorbar(image, ax=ax, label="Normalized Energy")
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+        except Exception as err:
+            st.error(f"Audio processing or prediction failed: {err}")
+            st.info(
+                "Check the WAV file, dependencies, checkpoint paths, "
+                "and model input shape."
+            )
+
+# ------------------------------------------------------------------
+# Tab 3: Benchmark performance
+# ------------------------------------------------------------------
+
 with tab_benchmark:
-    st.markdown("##### Measured Test Set Performance Comparison:")
+    st.markdown("##### Measured Test Set Performance Comparison")
 
     overall_csv = (
-        PROJECT_DIR / "outputs" / "metrics"
+        PROJECT_DIR
+        / "outputs"
+        / "metrics"
         / "overall_model_evaluation.csv"
     )
 
@@ -299,20 +438,21 @@ with tab_benchmark:
 
                 st.dataframe(
                     test_df.style.format(formatters),
-                    use_container_width=True
+                    use_container_width=True,
                 )
             else:
                 st.info("No test-split rows were found in the metrics file.")
         else:
-            st.warning("The metrics file does not contain a 'split' column.")
+            st.warning("The metrics file has no 'split' column.")
     else:
         st.info(
-            "Benchmark metrics are not included in this deployment yet. "
-            "Model predictions can still be made in the Audio Upload tab."
+            "Benchmark metrics are unavailable in this deployment."
         )
 
     benchmark_figure = (
-        PROJECT_DIR / "outputs" / "figures"
+        PROJECT_DIR
+        / "outputs"
+        / "figures"
         / "noise_condition_metrics.png"
     )
 
@@ -320,13 +460,10 @@ with tab_benchmark:
         st.image(
             str(benchmark_figure),
             caption="Performance Across Background Noise Conditions",
-            use_container_width=True
+            use_container_width=True,
         )
     else:
-        st.info(
-            "The noise-condition benchmark figure is unavailable "
-            "in the deployed repository."
-        )
+        st.info("The noise-condition benchmark figure is unavailable.")
 
 
 
